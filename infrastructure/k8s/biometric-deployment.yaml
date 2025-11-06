@@ -1,0 +1,506 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biometric-service
+  namespace: fraud-prevention
+  labels:
+    app: biometric-service
+    version: v2.0.0
+    tier: backend
+    track: stable
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3001"
+    prometheus.io/path: "/metrics"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app: biometric-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: biometric-service
+        tier: backend
+        version: v2.0.0
+      annotations:
+        checksum/config: {{ include (basePath) "configmap.yaml" | sha256sum }}
+        checksum/secret: {{ include (basePath) "secret.yaml" | sha256sum }}
+        sidecar.istio.io/inject: "true"  # Istio service mesh
+        traffic.sidecar.istio.io/excludeOutboundPorts: "9092,2181"  # Exclude Kafka/ZK
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+    spec:
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+        supplementalGroups: [1001]
+        seccompProfile:
+          type: RuntimeDefault
+        sysctls:
+        - name: kernel.msgmax
+          value: "65536"
+        - name: kernel.msgmnb
+          value: "65536"
+      
+      # Node affinity (deploy to nodes with SSD)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/worker
+                operator: Exists
+              - key: storage.type
+                operator: In
+                values: ["ssd"]
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values: [biometric-service]
+              topologyKey: kubernetes.io/hostname
+      
+      # Tolerations for dedicated nodes
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "biometric"
+        effect: "NoSchedule"
+      
+      # Resource requests and limits
+      containers:
+      - name: biometric-service
+        image: biometric-service:v2.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3001
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        - containerPort: 8080
+          name: health
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: biometric-config
+              key: logLevel
+              optional: true
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: biometric-secrets
+              key: databaseUrl
+              optional: true
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: biometric-secrets
+              key: jwtSecret
+        - name: KAFKA_BROKERS
+          valueFrom:
+            configMapKeyRef:
+              name: infrastructure-config
+              key: kafkaBrokers
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        # Liveness probe
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        # Readiness probe
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3001
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        # Startup probe
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 3001
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        - name: logs-volume
+          mountPath: /app/logs
+        - name: tmp-volume
+          mountPath: /tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+      # Init containers for setup
+      initContainers:
+      - name: config-init
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Initializing biometric service configuration..."
+          # Pre-populate config if needed
+          touch /app/config/app.conf
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+      # Volumes
+      volumes:
+      - name: config-volume
+        configMap:
+          name: biometric-config
+          defaultMode: 0644
+          items:
+          - key: app-config.yaml
+            path: app.conf
+      - name: logs-volume
+        emptyDir:
+          sizeLimit: 100Mi
+          medium: Memory
+      - name: tmp-volume
+        emptyDir: {}
+      # Service account with limited permissions
+      serviceAccountName: biometric-sa
+      # Priority class for scheduling
+      priorityClassName: high-priority
+      
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: biometric-hpa
+  namespace: fraud-prevention
+  labels:
+    app: biometric-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: biometric-service
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  # CPU utilization (70% target)
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Memory utilization (80% target)
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Custom metric: requests per second
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: 100
+  # Custom metric: risk score average
+  - type: Pods
+    pods:
+      metric:
+        name: avg_risk_score
+      target:
+        type: AverageValue
+        averageValue: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      - type: Percent
+        value: 20
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: biometric-service
+  namespace: fraud-prevention
+  labels:
+    app: biometric-service
+    tier: backend
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # For AWS EKS
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3001"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3001
+    targetPort: 3001
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: biometric-service
+    tier: backend
+  sessionAffinity: None
+  # Health check for service level
+  healthCheckNodePort: 32001
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: biometric-network-policy
+  namespace: fraud-prevention
+spec:
+  podSelector:
+    matchLabels:
+      app: biometric-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from other services in namespace
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+      namespaceSelector:
+        matchLabels:
+          name: fraud-prevention
+    ports:
+    - protocol: TCP
+      port: 3001
+    # Allow health checks from monitoring
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090  # Metrics
+    - protocol: TCP
+      port: 8080  # Health
+  # Allow outbound to Kafka and databases
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: infrastructure
+    ports:
+    - protocol: TCP
+      port: 9092  # Kafka
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 27017 # MongoDB
+    - protocol: TCP
+      port: 6379  # Redis
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0  # Allow external API calls
+    ports:
+    - protocol: TCP
+      port: 443  # HTTPS
+    - protocol: TCP
+      port: 80   # HTTP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: biometric-config
+  namespace: fraud-prevention
+data:
+  logLevel: "info"
+  app-config.yaml: |
+    server:
+      port: 3001
+      host: 0.0.0.0
+    database:
+      connectionPool: 20
+      timeout: 30s
+    kafka:
+      topic: biometric-events
+      partitionCount: 12
+      replicationFactor: 3
+    biometric:
+      maxEventsPerSession: 10000
+      riskThresholds:
+        low: 30
+        medium: 70
+        high: 100
+      samplingRate: 10ms
+    security:
+      jwtExpiry: 24h
+      rateLimit: 1000r/1m
+      corsOrigins:
+        - https://dashboard.fraud-prevention.com
+        - https://mobile.fraud-prevention.com
+    monitoring:
+      metricsPort: 9090
+      healthPort: 8080
+      prometheus: true
+    logging:
+      level: info
+      rotation: daily
+      maxSize: 100MB
+      format: json
+  env-config.env: |
+    NODE_ENV=production
+    LOG_LEVEL=info
+    DATABASE_URL=postgresql://user:pass@db:5432/biometric
+    REDIS_URL=redis://redis:6379/0
+    KAFKA_BROKERS=kafka:9092
+    JWT_SECRET=change-in-production
+    API_KEYS=prod-key-1,prod-key-2
+    ALLOWED_ORIGINS=https://*.fraud-prevention.com
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: biometric-secrets
+  namespace: fraud-prevention
+  labels:
+    app: biometric-service
+type: Opaque
+stringData:
+  databaseUrl: "postgresql://biometric-user:secure-password@postgres-service:5432/biometric_prod"
+  redisUrl: "redis://:redis-password@redis-service:6379/0"
+  jwtSecret: "super-secure-jwt-secret-key-change-in-production-32-chars-minimum"
+  apiKeys: "prod-api-key-1:abc123def456,prod-api-key-2:xyz789uvw012"
+  encryptionKey: "aes-256-key-for-biometric-data-32-bytes-exactly-for-gcm"
+  sentryDsn: "https://sentry.io/project/12345"
+  slackWebhook: "{{ .Values.slackWebhook | default 'https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_FROM_GITHUB_SECRETS' | quote }}"
+  # Vault integration (external secrets operator)
+  # vault-role: biometric-role
+  # vault-path: kv/data/biometric
+
+---
+# Role-based access control
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: fraud-prevention
+  name: biometric-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "update", "patch", "get"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["biometric-secrets"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: biometric-binding
+  namespace: fraud-prevention
+subjects:
+- kind: ServiceAccount
+  name: biometric-sa
+  namespace: fraud-prevention
+roleRef:
+  kind: Role
+  name: biometric-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: biometric-sa
+  namespace: fraud-prevention
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/biometric-service-role  # For IRSA

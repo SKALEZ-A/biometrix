@@ -1,0 +1,285 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# Alertmanager configuration (contact points for fraud alerts)
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - alertmanager:9093
+  route:
+    group_by: ['alertname', 'cluster']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 12h
+    receiver: fraud-team
+  receivers:
+  - name: fraud-team
+    slack_configs:
+    - api_url: '${SLACK_API_URL}'
+      channel: '#fraud-alerts'
+      text: |
+        {{ range .Alerts }}
+          {{ .Annotations.summary }} - {{ .Annotations.description }}
+          Value: {{ .Values.A }}
+          {{ end }}
+      send_resolved: true
+      icon_emoji: ':rotating_light:'
+    email_configs:
+    - to: 'security@fraud-prevention.com'
+      from: 'prometheus@monitoring'
+      smarthost: 'smtp.corp.com:587'
+      auth_username: 'prometheus@corp.com'
+      auth_password: '${SMTP_PASSWORD}'
+      require_tls: true
+  - name: critical-incidents
+    slack_configs:
+    - api_url: '${SLACK_API_URL}'
+      channel: '#incidents'
+      text: |
+        :fire: CRITICAL FRAUD INCIDENT DETECTED :fire:
+        {{ range .Alerts }}
+        - {{ .Annotations.summary }} ({{ .Labels.severity }})
+        {{ end }}
+      send_resolved: true
+      icon_emoji: ':fire:'
+
+# Rule files for fraud detection alerts
+rule_files:
+  - 'rules/fraud-detection.yml'
+  - 'rules/infrastructure.yml'
+  - 'rules/performance.yml'
+  - 'rules/security.yml'
+
+# Scrape configuration for biometric services
+scrape_configs:
+
+  # Node.js services (biometric, transaction, alert, compliance)
+  - job_name: 'biometric-services'
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['biometric-service:9090', 'transaction-service:9090', 
+                  'alert-service:9090', 'compliance-service:9090']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: service
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+    # TLS for secure scraping
+    scheme: https
+    tls_config:
+      insecure_skip_verify: false
+    # Basic auth for production
+    basic_auth:
+      username: '${PROMETHEUS_USER}'
+      password: '${PROMETHEUS_PASS}'
+
+  # Python services (voice, fraud-detection)
+  - job_name: 'python-services'
+    scrape_interval: 15s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['voice-service:9091', 'fraud-detection-service:9091']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [job]
+        target_label: group
+        replacement: python-services
+    # Custom headers for authentication
+    bearer_token: '${BEARER_TOKEN}'
+
+  # Flink cluster metrics
+  - job_name: 'flink'
+    scrape_interval: 30s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['flink-jobmanager:9250-9260', 'flink-taskmanager:9250-9260']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        action: keep
+        regex: 925[0-9]
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+    # Job-specific metrics
+    params:
+      get: ['jobs']
+
+  # Kafka metrics (via JMX exporter)
+  - job_name: 'kafka'
+    scrape_interval: 15s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['kafka-broker-1:8080', 'kafka-broker-2:8080', 'kafka-broker-3:8080']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: kafka_id
+    # JMX configuration
+    jmx_config:
+      lowercase_output_name: true
+      lowercase_output_label_names: true
+      whitelist_object_names:
+        - 'kafka.*:type=BrokerTopicMetrics,name=BytesInPerSec'
+        - 'kafka.*:type=BrokerTopicMetrics,name=BytesOutPerSec'
+        - 'kafka.*:type=BrokerTopicMetrics,name=MessagesInPerSec'
+        - 'kafka.*:type=BrokerTopicMetrics,name=TotalProduceRequestsPerSec'
+        - 'kafka.*:type=BrokerTopicMetrics,name=ProduceRequestAvgTimeMs'
+        - 'kafka.*:type=BrokerTopicMetrics,name=TotalFetchRequestsPerSec'
+        - 'kafka.*:type=BrokerTopicMetrics,name=FetchRequestAvgTimeMs'
+        - 'kafka.*:type=ZooKeeperClientMetrics,name=ZooKeeperRequestLatencyMs'
+        - 'kafka.log:type=Log,name=Size'
+        - 'kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions'
+        - 'kafka.server:type=BrokerTopicMetrics,name=PartitionCount'
+        - 'kafka.server:type=BrokerTopicMetrics,name=LeaderCount'
+        - 'kafka.network:type=RequestMetrics,name=RequestQueueTimeMs,request=Produce'
+        - 'kafka.network:type=RequestMetrics,name=RequestQueueTimeMs,request=Fetch'
+
+  # Database metrics (PostgreSQL, MongoDB, Redis)
+  - job_name: 'databases'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['postgres-exporter:9187', 'mongodb-exporter:9216', 'redis-exporter:9121']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: database_type
+    # Database-specific scrape configs
+    params:
+      query: ['pg_stat_database']
+
+  # Admin dashboard and SDKs
+  - job_name: 'frontend'
+    scrape_interval: 20s
+    metrics_path: '/api/metrics'
+    static_configs:
+      - targets: ['admin-dashboard:3000', 'web-sdk-metrics:8080']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [job]
+        target_label: component
+        replacement: frontend
+
+  # Blockchain and IPFS monitoring
+  - job_name: 'blockchain'
+    scrape_interval: 60s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ethereum-node:6060', 'ipfs-node:9095']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_label_component]
+        target_label: blockchain_type
+    params:
+      module: [ethereum, ipfs]
+
+  # Infrastructure components (Kubernetes, Istio, etc.)
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+    - role: node
+    relabel_configs:
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+    - source_labels: [__address__]
+      target_label: instance
+    - source_labels: [__meta_kubernetes_node_name]
+      target_label: kubernetes_node
+
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+    - role: pod
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+      action: keep
+      regex: true
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+      action: replace
+      target_label: __metrics_path__
+      regex: (.+)
+    - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      target_label: __address__
+      target_label: __metrics_path__
+      replacement: ${1}:${2}
+    - source_labels: [__meta_kubernetes_pod_label_app]
+      target_label: app
+    - source_labels: [__meta_kubernetes_namespace]
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    - source_labels: [__meta_kubernetes_pod_container_name]
+      target_label: container
+
+  # Custom fraud detection metrics (via Pushgateway)
+  - job_name: 'fraud-pushgateway'
+    honor_labels: true
+    static_configs:
+    - targets: ['pushgateway:9091']
+    params:
+      grouping: ['instance', 'job']
+
+  # External services (if needed)
+  - job_name: 'external-apis'
+    scrape_interval: 60s
+    metrics_path: '/metrics'
+    static_configs:
+    - targets: ['third-party-risk-api.example.com:443']
+    scheme: https
+    tls_config:
+      insecure_skip_verify: false
+    bearer_token_file: '/etc/prometheus/bearer-token'
+
+# Additional scrape configs for specific use cases
+additional_scrape_configs:
+  - job_name: 'flink-jobs'
+    scrape_interval: 15s
+    metrics_path: '/jobs/:jobid/metrics'
+    static_configs:
+    - targets: ['flink-jobmanager:8081']
+    params:
+      jobid: [biometric-processor, fraud-pattern-detector]
+    relabel_configs:
+    - source_labels: [__address__]
+      target_label: instance
+    - source_labels: [jobid]
+      target_label: flink_job
+
+  - job_name: 'kafka-connect'
+    scrape_interval: 30s
+    metrics_path: '/metrics'
+    static_configs:
+    - targets: ['kafka-connect:8083']
+    relabel_configs:
+    - source_labels: [__address__]
+      target_label: instance
+
+  - job_name: 'elasticsearch'
+    scrape_interval: 30s
+    metrics_path: '/_prometheus/metrics'
+    scheme: https
+    static_configs:
+    - targets: ['elasticsearch-master:9200']
+    tls_config:
+      insecure_skip_verify: true
+    basic_auth:
+      username: 'elastic'
+      password_file: '/etc/elasticsearch/prometheus-password'
+
+  - job_name: 'grafana'
+    scrape_interval: 30s
+    metrics_path: '/api/prom/push'
+    static_configs:
+    - targets: ['grafana:3000']
+    params:
+      name: [grafana_build, grafana_notifications]

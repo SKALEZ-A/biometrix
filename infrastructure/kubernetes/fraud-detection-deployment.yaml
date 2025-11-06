@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-detection-service
+  namespace: fraud-prevention
+  labels:
+    app: fraud-detection-service
+    tier: backend
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: fraud-detection-service
+  template:
+    metadata:
+      labels:
+        app: fraud-detection-service
+    spec:
+      containers:
+      - name: fraud-detection-service
+        image: fraud-prevention/fraud-detection-service:latest
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: ML_MODEL_PATH
+          value: "/models"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: fraud-detection-secrets
+              key: database-url
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: ml-models
+          mountPath: /models
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: ml-models
+        persistentVolumeClaim:
+          claimName: ml-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-detection-service
+  namespace: fraud-prevention
+spec:
+  selector:
+    app: fraud-detection-service
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: ClusterIP

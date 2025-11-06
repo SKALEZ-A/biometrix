@@ -1,0 +1,1231 @@
+openapi: 3.0.3
+info:
+  title: Biometric Fraud Prevention API
+  description: |
+    Advanced biometric authentication and fraud detection system API.
+    
+    ## Features
+    - Face and fingerprint biometric enrollment and verification
+    - Real-time AI-powered fraud detection
+    - Secure data encryption and audit logging
+    - Admin dashboards and alert management
+    - Multi-tenant support
+    
+    ## Security
+    - JWT authentication with refresh tokens
+    - Biometric data encrypted at rest (AES-256)
+    - Rate limiting and request validation
+    - GDPR/CCPA compliant data handling
+    
+    ## Usage
+    All endpoints require authentication except public health checks.
+    Biometric embeddings are 128-dimensional float vectors.
+  version: 1.0.0
+  contact:
+    name: API Support
+    url: 'https://biometric-fraud-system.com/support'
+    email: support@biometric-fraud-system.com
+  license:
+    name: Apache 2.0
+    url: 'https://www.apache.org/licenses/LICENSE-2.0.html'
+
+servers:
+  - url: 'http://localhost:8000/api/v1'
+    description: Local development server
+  - url: 'https://api.biometric-fraud-system.com/v1'
+    description: Production server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    User:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+          example: 'user_123'
+          description: Unique user identifier
+        name:
+          type: string
+          example: 'John Doe'
+          description: User full name
+        email:
+          type: string
+          format: email
+          example: 'john.doe@example.com'
+        enrolled:
+          type: boolean
+          default: false
+          description: Whether biometrics are enrolled
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-01T10:00:00Z'
+          description: Account creation timestamp
+        risk_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.05
+          description: User risk assessment score
+
+    UserBiometric:
+      type: object
+      required: [user_id, face_embedding, fingerprint_hash, timestamp]
+      properties:
+        user_id:
+          type: string
+          example: 'user_123'
+        face_embedding:
+          type: array
+          items:
+            type: number
+            format: float
+          minItems: 128
+          maxItems: 128
+          example: [-0.1, 0.2, 0.3, 0.4, -0.5, 0.6, 0.7, -0.8, 0.9, 1.0]
+          description: 128-dimensional face embedding vector
+        fingerprint_hash:
+          type: string
+          example: 'sha256_hashed_fingerprint_data'
+          description: Hashed fingerprint template
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-01T10:00:00Z'
+        quality_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.95
+          description: Capture quality (0-1)
+        liveness_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.98
+          description: Liveness detection confidence
+
+    FraudAlert:
+      type: object
+      required: [user_id, score, reason, severity]
+      properties:
+        id:
+          type: string
+          example: 'alert_001'
+          description: Unique alert identifier
+        user_id:
+          type: string
+          example: 'user_123'
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.85
+          description: Fraud probability score (0-1)
+        reason:
+          type: string
+          example: 'Biometric mismatch detected'
+          description: Explanation of fraud detection
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+          example: 'high'
+          description: Alert severity level
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-01T10:00:00Z'
+        evidence:
+          type: object
+          properties:
+            anomaly_type:
+              type: string
+              example: 'spoofing'
+            confidence:
+              type: number
+              format: float
+              example: 0.92
+            distance_metric:
+              type: number
+              format: float
+              example: 1.25
+          description: Supporting evidence for the alert
+        resolved:
+          type: boolean
+          default: false
+          example: false
+          description: Whether the alert has been investigated
+
+    FraudDetectionRequest:
+      type: object
+      required: [user_id, face_embedding]
+      allOf:
+        - $ref: '#/components/schemas/UserBiometric'
+        - type: object
+          properties:
+            session_id:
+              type: string
+              example: 'sess_abc123'
+              description: Session identifier for tracking
+
+    FraudDetectionResponse:
+      type: object
+      properties:
+        fraud_detected:
+          type: boolean
+          example: true
+          description: Whether fraud was detected
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.87
+        threshold:
+          type: number
+          format: float
+          example: 0.5
+          description: Detection threshold used
+        reason:
+          type: string
+          example: 'High anomaly score in facial embedding'
+        alert_id:
+          type: string
+          example: 'alert_001'
+        processing_time_ms:
+          type: integer
+          example: 125
+          description: Inference time
+        recommendations:
+          type: array
+          items:
+            type: string
+          example: ['Require MFA', 'Temporary account lock', 'Manual review']
+        evidence:
+          $ref: '#/components/schemas/FraudAlert/properties/evidence'
+
+    ErrorResponse:
+      type: object
+      properties:
+        error_code:
+          type: string
+          example: 'AUTH_001'
+        message:
+          type: string
+          example: 'Invalid authentication token'
+        details:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-01T10:00:00Z'
+        correlation_id:
+          type: string
+          example: 'corr_123456'
+
+    HealthCheckResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, critical]
+          example: 'healthy'
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-01T10:00:00Z'
+        uptime:
+          type: number
+          format: float
+          example: 99.95
+          description: Percentage uptime over last 24h
+        components:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [ok, warning, error]
+              example: 'ok'
+            ml_model:
+              type: string
+              enum: [ok, warning, error]
+              example: 'ok'
+            external_services:
+              type: object
+              properties:
+                email:
+                  type: string
+                  example: 'ok'
+                sms:
+                  type: string
+                  example: 'ok'
+
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+              example: 1
+            per_page:
+              type: integer
+              example: 50
+            total:
+              type: integer
+              example: 1234
+            total_pages:
+              type: integer
+              example: 25
+            has_next:
+              type: boolean
+              example: true
+            has_prev:
+              type: boolean
+              example: false
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number
+      required: false
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+    PerPage:
+      name: per_page
+      in: query
+      description: Items per page
+      required: false
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 100
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      description: User identifier
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items
+      required: false
+      schema:
+        type: integer
+        default: 100
+        minimum: 1
+        maximum: 1000
+    SeverityFilter:
+      name: severity
+      in: query
+      description: Filter by severity
+      required: false
+      schema:
+        type: array
+        items:
+          type: string
+          enum: [low, medium, high, critical]
+
+security:
+  - BearerAuth: []
+
+paths:
+  /:
+    get:
+      summary: Root endpoint
+      description: Basic API information and health status
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: 'Biometric Fraud Prevention System API v1.0.0'
+                  status:
+                    type: string
+                    example: 'running'
+                  endpoints:
+                    type: array
+                    items:
+                      type: string
+                    example: ['/api/v1/health', '/api/v1/users', '/api/v1/biometrics']
+
+  /health:
+    get:
+      summary: Health check
+      description: System health and status information
+      tags: [Monitoring]
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheckResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users:
+    get:
+      summary: List users
+      description: Retrieve paginated list of users with optional filters
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: enrolled
+          in: query
+          description: Filter by enrollment status
+          schema:
+            type: boolean
+        - name: risk_min
+          in: query
+          description: Minimum risk score
+          schema:
+            type: number
+            format: float
+            minimum: 0
+            maximum: 1
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+                example:
+                  data:
+                    - $ref: '#/components/schemas/User'
+                  pagination:
+                    page: 1
+                    per_page: 50
+                    total: 1234
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      summary: Create new user
+      description: Register a new user account
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+            example:
+              id: 'user_123'
+              name: 'John Doe'
+              email: 'john.doe@example.com'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: User already exists or invalid data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{user_id}:
+    get:
+      summary: Get user details
+      description: Retrieve specific user information including risk score and enrollment status
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized access to user data
+
+    put:
+      summary: Update user
+      description: Update user profile information (name, email, risk assessment)
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: 'John Doe Updated'
+                email:
+                  type: string
+                  format: email
+                  example: 'john.updated@example.com'
+                risk_score:
+                  type: number
+                  format: float
+                  example: 0.1
+              required: [name, email]
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid update data
+        '404':
+          description: User not found
+        '403':
+          description: Insufficient permissions
+
+    delete:
+      summary: Delete user
+      description: Permanently delete user account and associated biometric data (GDPR compliance)
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: User deleted successfully
+        '404':
+          description: User not found
+        '403':
+          description: Cannot delete active/enrolled user without confirmation
+
+  /biometrics/enroll:
+    post:
+      summary: Enroll biometrics
+      description: |
+        Enroll new biometric template for user. Supports face, fingerprint, or multi-modal.
+        
+        ## Requirements
+        - User must exist
+        - Quality score > 0.7
+        - Liveness detection passed
+        - Data encrypted before storage
+        
+        ## Process
+        1. Capture biometric data client-side
+        2. Extract embedding using ML model
+        3. Perform liveness check
+        4. Encrypt and store template
+        5. Send confirmation email
+      tags: [Biometrics]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserBiometric'
+            example:
+              user_id: 'user_123'
+              face_embedding: [-0.1, 0.2, 0.3, 0.4, -0.5, 0.6, 0.7, -0.8, 0.9, 1.0]
+              fingerprint_hash: 'sha256:abc123...'
+              timestamp: '2025-01-01T10:00:00Z'
+              quality_score: 0.95
+              liveness_score: 0.98
+      responses:
+        '201':
+          description: Enrollment successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: 'enrolled'
+                  user_id:
+                    type: string
+                    example: 'user_123'
+                  template_id:
+                    type: string
+                    example: 'template_456'
+                  quality:
+                    type: number
+                    example: 0.95
+                  next_verification:
+                    type: string
+                    format: date-time
+                    example: '2025-01-02T10:00:00Z'
+        '400':
+          description: Invalid biometric data or quality too low
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                example:
+                  error_code: 'BIOMETRIC_001'
+                  message: 'Quality score below threshold (min 0.7)'
+        '401':
+          description: Unauthorized
+        '409':
+          description: User already enrolled (use /update for re-enrollment)
+        '422':
+          description: Malformed embedding vector (must be 128 dimensions)
+
+  /biometrics/verify:
+    post:
+      summary: Verify biometrics
+      description: |
+        Real-time biometric verification against enrolled templates.
+        
+        ## Multi-factor Support
+        - Face only (fast)
+        - Fingerprint only (secure)
+        - Multi-modal (highest security)
+        
+        ## Response Time
+        - <100ms for 95% of requests
+        - ML inference optimized for low latency
+        
+        ## Security Features
+        - Session binding
+        - Rate limiting per user/device
+        - Anomaly detection on verification patterns
+      tags: [Biometrics]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudDetectionRequest'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudDetectionResponse'
+              example:
+                fraud_detected: false
+                score: 0.12
+                threshold: 0.5
+                reason: 'Successful match'
+                processing_time_ms: 85
+                confidence: 0.94
+                session_valid: true
+        '401':
+          description: Verification failed or fraud detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudDetectionResponse'
+              example:
+                fraud_detected: true
+                score: 0.78
+                threshold: 0.5
+                reason: 'Biometric mismatch - possible spoofing'
+                alert_id: 'alert_789'
+        '429':
+          description: Rate limit exceeded
+        '500':
+          description: ML service unavailable
+
+  /fraud/detect:
+    post:
+      summary: Fraud detection
+      description: |
+        Advanced AI-powered fraud detection using multiple signals.
+        
+        ## Detection Methods
+        - Biometric anomaly detection (Isolation Forest, autoencoders)
+        - Behavioral analysis (keystroke dynamics, mouse patterns)
+        - Device fingerprinting
+        - IP geolocation and velocity checks
+        - Historical pattern analysis
+        
+        ## Scoring Model
+        - Ensemble of 7 ML models
+        - Weighted combination of signals
+        - Continuously updated thresholds
+        - Explainable AI with feature importance
+        
+        ## Real-time Processing
+        - Stream processing with Kafka
+        - Sub-100ms inference time
+        - Automatic alert generation
+        - Integration with SIEM systems
+      tags: [Fraud]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudDetectionRequest'
+      responses:
+        '200':
+          description: Fraud analysis complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudDetectionResponse'
+        '400':
+          description: Invalid input data
+        '401':
+          description: Authentication required
+        '503':
+          description: ML service temporarily unavailable
+
+  /fraud/alerts:
+    get:
+      summary: Get fraud alerts
+      description: |
+        Retrieve fraud alerts with pagination and filtering.
+        
+        ## Filters
+        - Time range (last 24h, 7d, 30d, custom)
+        - Severity level
+        - User ID or pattern
+        - Status (open, resolved, false positive)
+        
+        ## Response Includes
+        - Alert details and evidence
+        - Associated user information
+        - Investigation notes and actions
+        - Related alerts and patterns
+      tags: [Fraud]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/SeverityFilter'
+        - name: user_id
+          in: query
+          description: Filter by specific user
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by alert status
+          schema:
+            type: string
+            enum: [open, resolved, investigating, false_positive]
+        - name: time_from
+          in: query
+          description: Start time for alerts
+          schema:
+            type: string
+            format: date-time
+        - name: time_to
+          in: query
+          description: End time for alerts
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of fraud alerts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+                example:
+                  data:
+                    - $ref: '#/components/schemas/FraudAlert'
+                  pagination:
+                    page: 1
+                    per_page: 50
+                    total: 234
+                    total_pages: 5
+        '401':
+          description: Admin access required
+
+    post:
+      summary: Bulk resolve alerts
+      description: Mark multiple alerts as resolved with investigation notes
+      tags: [Fraud]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alert_ids:
+                  type: array
+                  items:
+                    type: string
+                  example: ['alert_001', 'alert_002']
+                  minItems: 1
+                status:
+                  type: string
+                  enum: [resolved, false_positive, escalated]
+                  example: 'resolved'
+                notes:
+                  type: string
+                  example: 'Manual review confirmed legitimate user'
+                actions_taken:
+                  type: array
+                  items:
+                    type: string
+                  example: ['user_notified', 'pattern_whitelisted']
+              required: [alert_ids, status]
+      responses:
+        '200':
+          description: Alerts updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+                    example: 2
+                  details:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        alert_id:
+                          type: string
+                        status:
+                          type: string
+                        updated_at:
+                          type: string
+                          format: date-time
+
+  /fraud/reports:
+    get:
+      summary: Generate fraud reports
+      description: |
+        Generate comprehensive fraud analytics and reports.
+        
+        ## Available Reports
+        - Daily/weekly/monthly fraud statistics
+        - Geographic fraud patterns
+        - Device-type analysis
+        - Attack type breakdown
+        - False positive analysis
+        - ROI calculations
+        
+        ## Export Formats
+        - JSON (default)
+        - CSV download
+        - PDF summary
+      tags: [Fraud]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          description: Time period for report
+          schema:
+            type: string
+            enum: [day, week, month, quarter, year, custom]
+            default: 'week'
+        - name: format
+          in: query
+          description: Output format
+          schema:
+            type: string
+            enum: [json, csv, pdf]
+            default: 'json'
+        - name: include_details
+          in: query
+          description: Include granular data
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Fraud report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  period:
+                    type: string
+                    example: '2025-01-01 to 2025-01-07'
+                  total_verifications:
+                    type: integer
+                    example: 12500
+                  fraud_detections:
+                    type: integer
+                    example: 156
+                  detection_rate:
+                    type: number
+                    format: float
+                    example: 0.01248
+                  false_positives:
+                    type: integer
+                    example: 12
+                  accuracy:
+                    type: number
+                    format: float
+                    example: 0.992
+                  top_attack_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          example: 'spoofing'
+                        count:
+                          type: integer
+                          example: 89
+                        percentage:
+                          type: number
+                          example: 0.57
+                  geographic_breakdown:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        verifications:
+                          type: integer
+                        frauds:
+                          type: integer
+                        rate:
+                          type: number
+                  trends:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                          example: '2025-01-01'
+                        verifications:
+                          type: integer
+                        frauds:
+                          type: integer
+                        rate:
+                          type: number
+                  roi_analysis:
+                    type: object
+                    properties:
+                      prevented_fraud_value:
+                        type: number
+                        example: 125000
+                      system_cost:
+                        type: number
+                        example: 2500
+                      roi_percentage:
+                        type: number
+                        example: 4900
+                example:
+                  # Detailed report example would be extensive
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /admin/config:
+    get:
+      summary: System configuration
+      description: Retrieve current system configuration and settings (admin only)
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Configuration details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fraud_threshold:
+                    type: number
+                    example: 0.5
+                  max_concurrent_requests:
+                    type: integer
+                    example: 1000
+                  data_retention_days:
+                    type: object
+                    properties:
+                      alerts:
+                        type: integer
+                        example: 90
+                      biometrics:
+                        type: integer
+                        example: 365
+                  ml_model:
+                    type: object
+                    properties:
+                      version:
+                        type: string
+                        example: 'v2.1.3'
+                      accuracy:
+                        type: number
+                        example: 0.987
+                      last_trained:
+                        type: string
+                        format: date-time
+                  security:
+                    type: object
+                    properties:
+                      encryption_active:
+                        type: boolean
+                        example: true
+                      mfa_required:
+                        type: boolean
+                        example: true
+                      audit_logging:
+                        type: boolean
+                        example: true
+                  integrations:
+                    type: object
+                    properties:
+                      email_enabled:
+                        type: boolean
+                        example: true
+                      sms_enabled:
+                        type: boolean
+                        example: false
+                      siem_connected:
+                        type: boolean
+                        example: true
+
+    patch:
+      summary: Update system configuration
+      description: Modify runtime configuration parameters (requires super admin)
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fraud_threshold:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  example: 0.6
+                enable_mfa:
+                  type: boolean
+                  example: true
+                alert_notification:
+                  type: object
+                  properties:
+                    email:
+                      type: boolean
+                      example: true
+                    sms:
+                      type: boolean
+                      example: false
+                    webhook:
+                      type: string
+                      example: 'https://webhook.site/123'
+                data_retention:
+                  type: object
+                  properties:
+                    alerts_days:
+                      type: integer
+                      minimum: 1
+                      maximum: 3650
+                      example: 90
+                    biometrics_days:
+                      type: integer
+                      minimum: 30
+                      maximum: 3650
+                      example: 365
+              additionalProperties: false
+      responses:
+        '200':
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: 'updated'
+                  changes:
+                    type: array
+                    items:
+                      type: string
+                    example: ['fraud_threshold updated from 0.5 to 0.6', 'MFA enabled']
+                  restart_required:
+                    type: boolean
+                    example: false
+                    description: Whether service restart needed for changes
+        '400':
+          description: Invalid configuration values
+        '403':
+          description: Insufficient permissions
+        '422':
+          description: Validation failed
+
+  /admin/audit:
+    get:
+      summary: Audit logs
+      description: Retrieve system audit trail for compliance and investigation
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [enroll, verify, alert, config_change, user_create, user_delete]
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: ip_address
+          in: query
+          schema:
+            type: string
+            format: ipv4
+      responses:
+        '200':
+          description: Audit logs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+                example:
+                  data:
+                    - type: object
+                      properties:
+                        id:
+                          type: string
+                          example: 'audit_001'
+                        timestamp:
+                          type: string
+                          format: date-time
+                          example: '2025-01-01T10:00:00Z'
+                        user_id:
+                          type: string
+                          example: 'user_123'
+                        action:
+                          type: string
+                          example: 'biometric_enroll'
+                        actor:
+                          type: string
+                          example: 'system_api'
+                        resource:
+                          type: string
+                          example: 'biometric_template_456'
+                        details:
+                          type: object
+                          example:
+                            quality_score: 0.95
+                            liveness_passed: true
+                            session_id: 'sess_abc'
+                        ip_address:
+                          type: string
+                          example: '192.168.1.100'
+                        user_agent:
+                          type: string
+                          example: 'Mozilla/5.0...'
+                        outcome:
+                          type: string
+                          enum: [success, failure, warning]
+                          example: 'success'
+                        correlation_id:
+                          type: string
+                          example: 'corr_123456'
+                  pagination:
+                    page: 1
+                    total: 15432
+
+tags:
+  - name: Users
+    description: User management and profile operations
+  - name: Biometrics
+    description: Biometric enrollment and verification endpoints
+  - name: Fraud
+    description: Fraud detection, alerts, and reporting
+  - name: Admin
+    description: Administrative functions and system management
+  - name: Monitoring
+    description: Health checks and system metrics
+
+externalDocs:
+  description: Full API Documentation
+  url: 'https://docs.biometric-fraud-system.com/api'

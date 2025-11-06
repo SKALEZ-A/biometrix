@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Biometric Fraud Prevention System - Advanced AI-powered authentication and fraud detection platform." />
+    <meta name="keywords" content="biometrics, fraud prevention, AI, machine learning, security, authentication" />
+    <meta property="og:title" content="Biometric Fraud Prevention System" />
+    <meta property="og:description" content="Secure your platform with cutting-edge biometric verification and real-time fraud detection." />
+    <meta property="og:image" content="%PUBLIC_URL%/logo512.png" />
+    <meta property="og:url" content="https://biometric-fraud-system.com" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Biometric Fraud Prevention System" />
+    <meta name="twitter:description" content="Advanced biometric security solution" />
+    <meta name="twitter:image" content="%PUBLIC_URL%/logo512.png" />
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Security Headers (CSP would be set server-side) -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;" />
+    
+    <!-- Fonts and Styles -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="%PUBLIC_URL%/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+    
+    <title>Biometric Fraud Prevention System</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    
+    <!-- Loading indicator -->
+    <div id="loading" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; display: flex; align-items: center; justify-content: center; z-index: 9999;">
+      <div style="text-align: center;">
+        <img src="%PUBLIC_URL%/logo192.png" alt="Loading..." style="width: 48px; height: 48px; margin-bottom: 16px;" />
+        <p style="color: #666; font-family: 'Inter', sans-serif;">Initializing Biometric Security System...</p>
+      </div>
+    </div>
+    
+    <!-- Error boundary fallback -->
+    <div id="error-boundary" style="display: none; padding: 20px; background: #fee; color: #c33; border: 1px solid #fcc; border-radius: 4px; margin: 20px;">
+      <h3>Something went wrong</h3>
+      <p>Please refresh the page or contact support.</p>
+    </div>
+  </body>
+</html>

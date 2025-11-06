@@ -1,0 +1,135 @@
+{
+  "dashboard": {
+    "title": "Fraud Prevention System",
+    "tags": ["fraud-prevention", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Transaction Volume",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(transactions_total[5m])",
+            "legendFormat": "Transactions/sec"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Fraud Detection Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(fraud_detected_total[5m])",
+            "legendFormat": "Fraud Detected/sec"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Average Risk Score",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg(risk_score)",
+            "legendFormat": "Avg Risk Score"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 4,
+        "title": "Active Alerts",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(alerts_active)",
+            "legendFormat": "Active Alerts"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 8
+        }
+      },
+      {
+        "id": 5,
+        "title": "API Response Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 6,
+        "title": "Service Health",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "up{job=~\".*-service\"}",
+            "format": "table"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 7,
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+            "legendFormat": "{{service}} - 5xx"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        }
+      }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1
+  }
+}

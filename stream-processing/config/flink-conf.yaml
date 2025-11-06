@@ -1,0 +1,179 @@
+# Apache Flink Configuration for Biometric Fraud Prevention
+# Optimized for high-throughput stream processing
+# Production deployment settings
+
+# =============================================================================
+#  Cluster Settings
+# =============================================================================
+
+jobmanager:
+  # Resource allocation
+  memory.process.size: 1728m
+  slots.per.taskmanager: 4
+  rpc.address: 0.0.0.0
+  rpc.port: 6123
+  rest.address: 0.0.0.0
+  rest.port: 8081
+  web.port: 8081
+  
+  # High availability (for production)
+  high-availability: zookeeper
+  high-availability.storageDir: hdfs:///flink/ha
+  high-availability.zookeeper.quorum: zk1:2181,zk2:2181,zk3:2181
+
+taskmanager:
+  # Memory configuration (optimized for stateful processing)
+  memory.process.size: 4096m
+  memory.network.fraction: 0.1
+  memory.framework.fraction: 0.3
+  memory.task.heap.size: 1536m
+  memory.task.off-heap.size: 512m
+  memory.managed.fraction: 0.4
+  
+  # Network buffers for high throughput
+  numberOfTaskSlots: 4
+  taskmanager.network.numberOfBuffers: 16384
+  taskmanager.network.memory.buffers-per-channel: 16
+  taskmanager.network.memory.min: 64m
+  taskmanager.network.memory.max: 1g
+  
+  # CPU and I/O optimization
+  taskmanager.numberOfTaskSlots: 4
+  parallelism.default: 16
+
+# =============================================================================
+#  Execution Settings
+# =============================================================================
+
+execution:
+  # Checkpointing for exactly-once semantics
+  checkpointing.interval: 60000ms
+  checkpointing.mode: EXACTLY_ONCE
+  checkpointing.min-pause: 5000ms
+  checkpointing.max-concurrent-checkpoints: 2
+  
+  # State backend configuration
+  state.backend: rocksdb
+  state.checkpoints.dir: hdfs:///flink/checkpoints
+  state.backend.incremental: true
+  state.backend.rocksdb.write-buffer-size: 64mb
+  state.backend.rocksdb.block-cache-size: 256mb
+  state.backend.rocksdb.max-write-buffer-number: 3
+  
+  # Watermarking and event time
+  watermark.interval: 5000ms
+  runtime.default-watermark-emission-interval: 5000ms
+  
+  # Batch execution (for aggregations)
+  batch.process.window-size: 1000
+  batch.process.max-parallelism: 128
+
+# =============================================================================
+#  Restart Strategy
+# =============================================================================
+
+restart-strategy:
+  type: fixed-delay
+  attempts: 3
+  delay: 10000ms
+
+# =============================================================================
+#  Metrics and Monitoring
+# =============================================================================
+
+metrics:
+  # Prometheus reporter
+  reporter.prom:
+    enabled: true
+    port: 9250-9260
+    delete-on-shutdown: false
+  
+  # InfluxDB for time-series metrics
+  reporter.influx:
+    enabled: false
+    db.host: influxdb
+    db.port: 8086
+    db.name: flink_metrics
+    interval: 10s
+  
+  # Custom metrics for fraud detection
+  latency.interval: 10000ms
+  checkpoint.interval: 30000ms
+  numRecordsInPerSecond.interval: 1000ms
+  numRecordsOutPerSecond.interval: 1000ms
+
+# =============================================================================
+#  Kafka Integration
+# =============================================================================
+
+# Kafka producer/consumer settings (via connector configs)
+kafka:
+  producer:
+    acks: all
+    retries: 2147483647
+    batch.size: 16384
+    linger.ms: 5
+    buffer.memory: 33554432
+    compression.type: snappy
+  
+  consumer:
+    fetch.min.bytes: 1
+    fetch.max.wait.ms: 500
+    max.partition.fetch.bytes: 1048576
+    session.timeout.ms: 30000
+    heartbeat.interval.ms: 3000
+
+# =============================================================================
+#  Security Configuration
+# =============================================================================
+
+security:
+  ssl.internal.enabled: false
+  kerberos.login.keytab: /etc/security/keytabs/flink.keytab
+  kerberos.login.principal: flink@EXAMPLE.COM
+
+# =============================================================================
+#  Advanced Tuning for Biometric Processing
+# =============================================================================
+
+# Custom settings for biometric fraud detection jobs
+blob.server.port: 61241:61243
+jobmanager.execution.failover-strategy: region
+state.backend.rocksdb.predefined-options: FLASH_SSD_OPTIMIZED
+execution.buffer-timeout: 100ms
+taskmanager.memory.segment-size: 33554432  # 32MB
+
+# Network optimization for high-throughput biometric streams
+taskmanager.network.request-threads: 32
+taskmanager.network.request-queue-length: 128
+taskmanager.network.netty.client.connectTimeoutSec: 120
+taskmanager.network.netty.client.connectMaxRetries: 5
+
+# Garbage collection tuning for long-running jobs
+taskmanager.jvm-opts: >
+  -XX:+UseG1GC
+  -XX:+UnlockExperimentalVMOptions
+  -XX:MaxGCPauseMillis=100
+  -XX:G1HeapRegionSize=16m
+  -XX:+UseStringDeduplication
+  -XX:+ExitOnOutOfMemoryError
+  -XX:OnOutOfMemoryError='kill -9 %p'
+
+# High availability storage (HDFS for production)
+high-availability.storageDir: hdfs:///flink/ha
+
+# Job-specific configurations
+jobmanager.web.log.path: /var/log/flink
+jobmanager.web.pastJobsOverview.numItems: 10
+jobmanager.web.expired-job-retention-time: 3600000ms  # 1 hour
+jobmanager.archive.fs.dir: hdfs:///flink/archive
+
+# Resource management
+yarn.ship-files: flink-configuration.yaml,log4j.properties
+yarn.maximum-heap: 1024m
+yarn.ship-log4j.conf: true
+
+# Logging configuration
+log4j.configuration: log4j-console.properties
+
+# End of configuration

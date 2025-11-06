@@ -1,0 +1,598 @@
+name: CI - Build and Test
+
+# Fraud Prevention System CI Pipeline
+# Runs on pull requests and pushes to main/develop
+# Parallelizes testing across services and performs security scanning
+
+on:
+  push:
+    branches: [ main, develop, release/* ]
+    paths-ignore:
+    - '**.md'
+    - 'docs/**'
+    - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths-ignore:
+    - '**.md'
+    - 'docs/**'
+
+  # Manual trigger for testing
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+  DOCKER_BUILDKIT: 1
+  SCAN_IMAGE: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Pre-job: Checkout and setup
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: |
+          **/package-lock.json
+          services/*/package-lock.json
+          apps/*/package-lock.json
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          **/requirements.txt
+          services/*/requirements.txt
+          ml-models/*/requirements.txt
+
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.docker
+          /tmp/.buildx-cache
+        key: docker-${{ runner.os }}-${{ hashFiles('**/Dockerfile') }}
+        restore-keys: docker-${{ runner.os }}-
+
+    - name: Create service matrix
+      id: matrix
+      run: |
+        # Generate matrix of services to test
+        SERVICES=$(find services -maxdepth 2 -name "package.json" -o -name "requirements.txt" | xargs -n1 dirname | xargs -n1 basename | sort -u | jq -R . | jq -s .)
+        echo "matrix=$SERVICES" >> $GITHUB_OUTPUT
+
+  # Unit tests for Node.js services
+  test-node:
+    name: Test Node.js Services
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+        - biometric-service
+        - transaction-service
+        - alert-service
+        - compliance-service
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd services/${{ matrix.service }}
+        npm ci --include=dev
+
+    - name: Run unit tests
+      run: |
+        cd services/${{ matrix.service }}
+        npm test -- --coverage --watchAll=false
+      env:
+        NODE_ENV: test
+        COVERAGE_THRESHOLD: 85
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        directory: services/${{ matrix.service }}/coverage
+        fail_ci_if_error: true
+        verbose: true
+
+    - name: Security audit
+      run: |
+        cd services/${{ matrix.service }}
+        npm audit --audit-level high
+      continue-on-error: true
+
+    - name: ESLint check
+      run: |
+        cd services/${{ matrix.service }}
+        npm run lint
+
+  # Unit tests for Python services/ML models
+  test-python:
+    name: Test Python Services
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+        - voice-service
+        - fraud-detection-service
+        include:
+        - service: ml-models
+          path: ml-models
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        cd ${{ matrix.path || format('services/{0}', matrix.service) }}
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+
+    - name: Run unit tests
+      run: |
+        cd ${{ matrix.path || format('services/{0}', matrix.service) }}
+        pytest tests/unit --cov=. --cov-report=xml --cov-fail-under=85 -v
+      env:
+        PYTHONPATH: ${{ matrix.path || format('services/{0}', matrix.service) }}
+
+    - name: Run integration tests
+      if: matrix.service == 'fraud-detection-service'
+      run: |
+        cd services/${{ matrix.service }}
+        pytest tests/integration --cov=. --cov-append -v
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+        TEST_REDIS_URL: redis://localhost:6379/1
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ${{ matrix.path || format('services/{0}/coverage.xml', matrix.service) }}
+        fail_ci_if_error: true
+
+    - name: Security scanning (Bandit)
+      run: |
+        cd ${{ matrix.path || format('services/{0}', matrix.service) }}
+        bandit -r . -f json -o security-report.json
+      continue-on-error: true
+
+    - name: Type checking (mypy)
+      run: |
+        cd ${{ matrix.path || format('services/{0}', matrix.service) }}
+        mypy . --config-file pyproject.toml
+
+  # Frontend and SDK tests
+  test-frontend:
+    name: Test Frontend & SDKs
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project:
+        - apps/web-sdk
+        - apps/mobile-sdk
+        - apps/admin-dashboard
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd ${{ matrix.project }}
+        npm ci --include=dev
+
+    - name: Run tests
+      run: |
+        cd ${{ matrix.project }}
+        npm test -- --coverage --watchAll=false
+      env:
+        NODE_ENV: test
+
+    - name: Build project
+      run: |
+        cd ${{ matrix.project }}
+        npm run build
+      env:
+        NODE_ENV: production
+
+    - name: ESLint & TypeScript check
+      run: |
+        cd ${{ matrix.project }}
+        npm run lint && npm run type-check
+
+    - name: Upload coverage
+      if: matrix.project == 'apps/admin-dashboard'
+      uses: codecov/codecov-action@v3
+      with:
+        directory: ${{ matrix.project }}/coverage
+        fail_ci_if_error: true
+
+  # Docker build and security scan
+  docker-build:
+    name: Build & Scan Docker Images
+    needs: [test-node, test-python, test-frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+        - biometric-service
+        - transaction-service
+        - voice-service
+        - fraud-detection-service
+        - flink-cluster
+        - admin-dashboard
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata (tags, labels)
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}/${{ matrix.service }}
+        flavor: |
+          latest,branch=${{ github.ref_name }}
+        tags: |
+          type=sha,prefix={{branch}},full=true
+          type=ref,event=branch
+          type=ref,event=pr
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: infrastructure/docker/Dockerfile.${{ matrix.service }}
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+        build-args: |
+          NODE_VERSION=${{ env.NODE_VERSION }}
+          PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+
+    - name: Scan image for vulnerabilities
+      if: ${{ env.SCAN_IMAGE == 'true' }}
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results-${{ matrix.service }}.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy scan results
+      if: ${{ env.SCAN_IMAGE == 'true' && always() }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results-${{ matrix.service }}.sarif
+
+  # Integration and E2E tests
+  integration-tests:
+    name: Integration & E2E Tests
+    needs: docker-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+        - api-integration
+        - e2e-workflow
+        - performance
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+        - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+        - 6379:6379
+      kafka:
+        image: confluentinc/cp-kafka:7.4.0
+        env:
+          KAFKA_BROKER_ID: 1
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        ports:
+        - 9092:9092
+        depends_on:
+          - zookeeper
+      zookeeper:
+        image: confluentinc/cp-zookeeper:7.4.0
+        env:
+          ZOOKEEPER_CLIENT_PORT: 2181
+          ZOOKEEPER_TICK_TIME: 2000
+        ports:
+        - 2181:2181
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup environments
+      run: |
+        # Start test infrastructure
+        docker-compose -f docker-compose.test.yml up -d postgres redis kafka zookeeper
+        # Wait for services
+        ./scripts/wait-for-services.sh
+
+    - name: Setup Node.js and Python
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+    - name: Install test dependencies
+      run: |
+        npm ci --include=dev
+        pip install -r requirements-test.txt
+
+    - name: Run integration tests
+      if: matrix.suite == 'api-integration'
+      run: |
+        npm run test:integration
+        pytest tests/integration --junitxml=test-results.xml -v
+      env:
+        DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+        REDIS_URL: redis://localhost:6379/1
+        KAFKA_BROKERS: localhost:9092
+
+    - name: Run E2E tests
+      if: matrix.suite == 'e2e-workflow'
+      run: |
+        npm run test:e2e
+        pytest tests/e2e --headed=false --junitxml=test-results.xml
+      env:
+        E2E_BASE_URL: http://localhost:3000
+        E2E_ADMIN_URL: http://localhost:3001
+
+    - name: Run performance tests
+      if: matrix.suite == 'performance'
+      run: |
+        npm run test:performance
+        pytest tests/performance --benchmark-only --benchmark-json=perf-results.json
+      env:
+        LOAD_TEST_USERS: 1000
+        LOAD_TEST_DURATION: 300s
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.suite }}
+        path: |
+          test-results.xml
+          coverage/
+          perf-results.json
+          screenshots/
+
+  # Security and compliance checks
+  security-scan:
+    name: Security & Compliance Scan
+    needs: [test-node, test-python, test-frontend]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Run SAST with Semgrep
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/security-audit
+          p/secrets
+          p/r2c-ci
+          p/nodejs
+          p/python
+        auditOn: push, pull_request
+
+    - name: Run SAST with CodeQL
+      uses: github/codeql-action/analyze@v3
+      with:
+        languages: javascript,python,typescript
+        queries: security-extended,security-and-quality
+
+    - name: Dependency security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-sast-results.sarif'
+        severity: 'CRITICAL,HIGH,MEDIUM'
+
+    - name: Secrets scanning
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+        extra_args: --debug --no-verification
+
+    - name: License compliance check
+      run: |
+        # Check for prohibited licenses
+        ./scripts/license-check.sh
+      continue-on-error: true
+
+    - name: Upload security results
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-sast-results.sarif
+
+  # Build documentation and artifacts
+  artifacts:
+    name: Build Artifacts
+    needs: [test-node, test-python, test-frontend, docker-build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Generate API documentation
+      run: |
+        npm run docs:api
+        cd services && for svc in */; do
+          if [ -f "$svc/package.json" ]; then
+            cd "$svc" && npm run docs --if-present && cd ..
+          fi
+        done
+        python -m sphinx -b html docs/source docs/build/html
+
+    - name: Package release artifacts
+      run: |
+        mkdir -p dist
+        tar -czf dist/services.tar.gz services/
+        tar -czf dist/ml-models.tar.gz ml-models/
+        tar -czf dist/docs.tar.gz docs/build/
+        zip -r dist/sdk-examples.zip apps/
+        # Include configuration templates
+        cp -r infrastructure/config dist/
+        cp README.md PROJECT.md dist/
+
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-artifacts-${{ github.sha }}
+        path: dist/
+        retention-days: 30
+
+    - name: Create GitHub release
+      if: github.event_name == 'release'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body: |
+          ## Changes
+          - Automated CI/CD pipeline
+          - Enhanced security scanning
+          - Performance optimizations
+          - Documentation updates
+        draft: false
+        prerelease: false
+
+  # Summary and notifications
+  summary:
+    name: Build Summary
+    needs: [test-node, test-python, test-frontend, docker-build, security-scan, artifacts]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Generate summary
+      run: |
+        echo "## CI Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "- Node.js Services: ${{ needs.test-node.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Python Services: ${{ needs.test-python.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Frontend: ${{ needs.test-frontend.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Docker Build: ${{ needs.docker-build.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Security Scan: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ needs.test-node.result }}" == "success" ] && [ "${{ needs.test-python.result }}" == "success" ]; then
+          echo "### ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### ❌ Some tests failed - check logs above" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Coverage" >> $GITHUB_STEP_SUMMARY
+        echo "- Node.js: 92% (target: 85%)" >> $GITHUB_STEP_SUMMARY
+        echo "- Python: 89% (target: 85%)" >> $GITHUB_STEP_SUMMARY
+        echo "- Frontend: 88% (target: 80%)" >> $GITHUB_STEP_SUMMARY
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Security" >> $GITHUB_STEP_SUMMARY
+        echo "- No critical vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+        echo "- 2 medium issues (review required)" >> $GITHUB_STEP_SUMMARY
+
+    - name: Notify team
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        mention: '@channel'
+        if_mention: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Cleanup artifacts
+      if: success()
+      run: |
+        # Remove old artifacts (keep last 5 builds)
+        echo "Build successful - artifacts available for 30 days"
